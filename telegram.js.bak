@@ -1,0 +1,644 @@
+/**
+ * ┆𝐌|𝐒𒁂VΣ᳄ФM𒀭 ÐΞV⊹𝗠𝗗🟢 — Telegram Bot Interface
+ *
+ * Users send /pair <phone_number> here to get their WhatsApp pairing code.
+ * Each user gets their own independent WhatsApp session.
+ */
+
+'use strict';
+
+require('dotenv').config();
+
+const fs = require('fs');
+const path = require('path');
+const TelegramBot = require('node-telegram-bot-api');
+const { requestPairForUser, getActiveSessions, listSavedSessions, registerCallbacks } = require('./session_manager');
+
+let bot = null;
+
+const FORCE_JOIN_CHANNEL = 'mr_smithvenomdev';
+const FORCE_JOIN_GROUP = 'mrsmith_venomdev'
+const FORCE_SHARE_LINK = 'mrsmith_venomdev_mdbot';
+const chatPhoneMap = new Map();
+
+async function isChannelMember(chatId) {
+    try {
+        const member = await bot.getChatMember(`@${FORCE_JOIN_CHANNEL}`, chatId);
+        return ['member', 'administrator', 'creator'].includes(member.status);
+    } catch (err) {
+        return false;
+    }
+}
+
+async function sendJoinRequired(chatId, name) {
+    await bot.sendMessage(
+        chatId,
+        `╔══〘 🚫 *𝓐𝓬𝓬𝓮𝓼𝓼 𝓓𝓮𝓷𝓲𝓮𝓭* 〙══╗\n\n` +
+        `Hey *${name}*! You must join our official channel before using 『𝗗𝗔𝗥𝗞-𝗩𝗘𝗡𝗢𝗠 𝗠𝗗』.\n\n` +
+        `👇 Tap the button below, join, then press /start again.\n\n` +
+        `╚════════════════════════╝`,
+        {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: '📢 Join ꧁༒VENOM TECH༒꧂', url: `https://t.me/${FORCE_JOIN_CHANNEL}` }],
+                    [{ text: '💎 Join VENOM DOMAIN', url: `https://t.me/${FORCE_JOIN_GROUP}` }],
+                      [{ text: '🖇️ SHARE 『𝗗𝗔𝗥𝗞-𝗩𝗘𝗡𝗢𝗠 𝗠𝗗』', url: `https://t.me/${FORCE_SHARE_LINK}` }],
+                    [{ text: '🔄 I Joined — Restart', callback_data: 'check_join' }]
+                ]
+            }
+        }
+    );
+}
+
+function initTelegramBot() {
+    const token = process.env.TELEGRAM_BOT_TOKEN || require('./settings').telegramBotToken;
+
+    if (!token || token === 'YOUR_TELEGRAM_BOT_TOKEN') {
+        console.log('⚠️  TELEGRAM_BOT_TOKEN not set. Telegram bot will not start.');
+        return null;
+    }
+
+    try {
+        bot = new TelegramBot(token, { polling: true });
+        console.log('🤖 WELCOME TO 『𝗗𝗔𝗥𝗞-𝗩𝗘𝗡𝗢𝗠 𝗠𝗗』 Telegram bot started!');
+
+        registerCallbacks({
+            onPairCode: (phone, code, errMsg) => {
+                const chatId = chatPhoneMap.get(phone);
+                if (!chatId) return;
+
+                if (!code) {
+                    bot.sendMessage(chatId,
+                        `╔══〘 ❌ *𝓔𝓻𝓻𝓸𝓻* 〙══╗\n\n` +
+                        `Failed to generate pairing code for *+${phone}*.\n` +
+                        (errMsg ? `_Error: ${errMsg}_\n` : '') +
+                        `\nTry again by tapping the button below.\n\n` +
+                        `╚════════════════════════╝`,
+                        {
+                            parse_mode: 'Markdown',
+                            reply_markup: {
+                                inline_keyboard: [[
+                                    { text: '🔄 Try Again', callback_data: `retry_pair_${phone}` }
+                                ]]
+                            }
+                        }
+                    );
+                    return;
+                }
+
+                bot.sendMessage(chatId,
+                    `╔══〘 🔑 *𝓟𝓪𝓲𝓻𝓲𝓷𝓰 𝓒𝓸𝓭𝓮* 〙══╗\n\n` +
+                    `✅ *Your WhatsApp Pairing Code:*\n\n` +
+                    `\`${code}\`\n\n` +
+                    `📱 *Steps to link:*\n` +
+                    `1️⃣ Open WhatsApp\n` +
+                    `2️⃣ Tap ⋮ Menu → *Linked Devices*\n` +
+                    `3️⃣ Tap *Link a Device*\n` +
+                    `4️⃣ Tap *Link with phone number instead*\n` +
+                    `5️⃣ Enter the code above\n\n` +
+                    `⏰ _Code expires in a few minutes — act quickly!_\n\n` +
+                    `╚════════════════════════╝`,
+                    {
+                        parse_mode: 'Markdown',
+                        reply_markup: {
+                            inline_keyboard: [
+                                [{ text: '✅ Done — I Entered the Code', callback_data: 'pair_done' }],
+                                [{ text: '🔄 Get a New Code', callback_data: `retry_pair_${phone}` }],
+                                [{ text: '❓ Need Help?', callback_data: 'pair_help' }]
+                            ]
+                        }
+                    }
+                );
+            },
+
+            onConnected: (phone) => {
+                const chatId = chatPhoneMap.get(phone);
+                if (!chatId) return;
+                bot.sendMessage(chatId,
+                    `╔══〘 🎉 *𝓒𝓸𝓷𝓷𝓮𝓬𝓽𝓮𝓭!* 〙══╗\n\n` +
+                    `✨ *+${phone}* is now linked to 『𝗗𝗔𝗥𝗞-𝗩𝗘𝗡𝗢𝗠 𝗠𝗗』!\n\n` +
+                    `You can now use bot commands directly on WhatsApp.\n` +
+                    `Send *.menu* on WhatsApp to see all available commands.\n\n` +
+                    `╚════════════════════════╝`,
+                    {
+                        parse_mode: 'Markdown',
+                        reply_markup: {
+                            inline_keyboard: [
+                                [{ text: '📋 View WhatsApp Commands', callback_data: 'show_wa_cmds' }],
+                                [{ text: '📊 Check Status', callback_data: 'check_status' }]
+                            ]
+                        }
+                    }
+                );
+            },
+
+            onDisconnected: (phone) => {
+                const chatId = chatPhoneMap.get(phone);
+                chatPhoneMap.delete(phone);
+                if (!chatId) return;
+                bot.sendMessage(chatId,
+                    `╔══〘 ⚠️ *𝓓𝓲𝓼𝓬𝓸𝓷𝓷𝓮𝓬𝓽𝓮𝓭* 〙══╗\n\n` +
+                    `Your WhatsApp session for *+${phone}* was disconnected.\n\n` +
+                    `Tap the button below to reconnect.\n\n` +
+                    `╚════════════════════════╝`,
+                    {
+                        parse_mode: 'Markdown',
+                        reply_markup: {
+                            inline_keyboard: [[
+                                { text: '🔄 Reconnect', callback_data: `retry_pair_${phone}` }
+                            ]]
+                        }
+                    }
+                );
+            }
+        });
+
+        // ─── /start ───────────────────────────────────────────────────────────
+        bot.onText(/\/start/, async (msg) => {
+            const chatId = msg.chat.id;
+            const name = msg.from.first_name || 'User';
+
+            const isMember = await isChannelMember(chatId);
+            if (!isMember) return sendJoinRequired(chatId, name);
+
+            const welcomeText =
+                `╔══〘 ✨ *『𝗗𝗔𝗥𝗞-𝗩𝗘𝗡𝗢𝗠 𝗠𝗗』* 〙══╗\n\n` +
+                `👋 Welcome, *${name}*!\n\n` +
+                `is an advanced WhatsApp bot with powerful group management, AI, fun commands, and much more.\n\n` +
+                `┏━━━〘 🚀 *𝓖𝓮𝓽 𝓢𝓽𝓪𝓻𝓽𝓮𝓭* 〙━━━\n` +
+                `┃ 1️⃣ Tap *Pair My WhatsApp* below\n` +
+                `┃ 2️⃣ Enter your number when asked\n` +
+                `┃ 3️⃣ Enter the code in WhatsApp\n` +
+                `┃ 4️⃣ Send *.menu* on WhatsApp!\n` +
+                `┗━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+                `💡 _Use /help to see all Telegram commands_\n\n` +
+                `╚════════════════════════╝`;
+
+            const videoPath = path.join(__dirname, 'assets', 'menu.mp4');
+            const sendOpts = {
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: '🔗 Pair My WhatsApp', callback_data: 'start_pair' }],
+                        [
+                            { text: '📖 Help', callback_data: 'show_help' }],
+                        [
+                            { text: '📊 Status', callback_data: 'check_status' }
+                        ],
+                        [{ text: '📢 Join Our Channel', url: `https://t.me/${FORCE_JOIN_CHANNEL}` }]
+                    ]
+                }
+            };
+
+            if (fs.existsSync(videoPath)) {
+                await bot.sendVideo(chatId, fs.createReadStream(videoPath), {
+                    caption: welcomeText,
+                    ...sendOpts,
+                    supports_streaming: true
+                }).catch(() => bot.sendMessage(chatId, welcomeText, sendOpts));
+            } else {
+                await bot.sendMessage(chatId, welcomeText, sendOpts);
+            }
+        });
+
+        // ─── /pair ────────────────────────────────────────────────────────────
+        bot.onText(/\/pair(?:\s+(.+))?/, async (msg, match) => {
+            const chatId = msg.chat.id;
+            const name = msg.from.first_name || 'User';
+
+            const isMember = await isChannelMember(chatId);
+            if (!isMember) return sendJoinRequired(chatId, name);
+
+            const phoneInput = match && match[1] ? match[1].trim() : null;
+
+            if (!phoneInput) {
+                return bot.sendMessage(chatId,
+                    `╔══〘 🔗 *𝓟𝓪𝓲𝓻 𝓨𝓸𝓾𝓻 𝓦𝓱𝓪𝓽𝓼𝓐𝓹𝓹* 〙══╗\n\n` +
+                    `Please include your phone number.\n\n` +
+                    `*Usage:* \`/pair <phone_number>\`\n` +
+                    `*Example:* \`/pair 2348012345678\`\n\n` +
+                    `📌 _Include country code, no + or spaces_\n\n` +
+                    `╚════════════════════════╝`,
+                    {
+                        parse_mode: 'Markdown',
+                        reply_markup: {
+                            inline_keyboard: [[
+                                { text: '❓ How to Pair', callback_data: 'pair_help' }
+                            ]]
+                        }
+                    }
+                );
+            }
+
+            const phone = phoneInput.replace(/[^0-9]/g, '');
+
+            if (phone.length < 7 || phone.length > 15) {
+                return bot.sendMessage(chatId,
+                    `╔══〘 ❌ *𝓘𝓷𝓿𝓪𝓵𝓲𝓭 𝓝𝓾𝓶𝓫𝓮𝓻* 〙══╗\n\n` +
+                    `That number format is invalid.\n\n` +
+                    `*Example:* \`2348012345678\`\n` +
+                    `_(Nigeria: +234 801 234 5678)_\n\n` +
+                    `╚════════════════════════╝`,
+                    {
+                        parse_mode: 'Markdown',
+                        reply_markup: {
+                            inline_keyboard: [[
+                                { text: '🔄 Try Again', callback_data: 'start_pair' }
+                            ]]
+                        }
+                    }
+                );
+            }
+
+            const sessions = getActiveSessions();
+            if (sessions.has(phone) && !sessions.get(phone).reconnecting) {
+                return bot.sendMessage(chatId,
+                    `╔══〘 ✅ *𝓐𝓵𝓻𝓮𝓪𝓭𝔂 𝓛𝓲𝓷𝓴𝓮𝓭* 〙══╗\n\n` +
+                    `*+${phone}* is already connected and running!\n\n` +
+                    `Go to WhatsApp and send *.menu* to use the bot.\n\n` +
+                    `╚════════════════════════╝`,
+                    {
+                        parse_mode: 'Markdown',
+                        reply_markup: {
+                            inline_keyboard: [[
+                                { text: '📊 Check Status', callback_data: 'check_status' }
+                            ]]
+                        }
+                    }
+                );
+            }
+
+            chatPhoneMap.set(phone, chatId);
+
+            await bot.sendMessage(chatId,
+                `╔══〘 ⏳ *𝓟𝓵𝓮𝓪𝓼𝓮 𝓦𝓪𝓲𝓽* 〙══╗\n\n` +
+                `⚡ Requesting pairing code for *+${phone}*...\n\n` +
+                `_This may take a few seconds._\n\n` +
+                `╚════════════════════════╝`,
+                { parse_mode: 'Markdown' }
+            );
+
+            try {
+                const result = await requestPairForUser(phone);
+                if (result === 'ALREADY_CONNECTED') {
+                    bot.sendMessage(chatId,
+                        `╔══〘 ✅ *𝓐𝓵𝓻𝓮𝓪𝓭𝔂 𝓛𝓲𝓷𝓴𝓮𝓭* 〙══╗\n\n` +
+                        `*+${phone}* is already connected!\n\nSend *.menu* on WhatsApp.\n\n` +
+                        `╚════════════════════════╝`,
+                        { parse_mode: 'Markdown' }
+                    );
+                }
+            } catch (err) {
+                console.error('[Telegram] Pair error:', err.message);
+                bot.sendMessage(chatId,
+                    `╔══〘 ❌ *𝓔𝓻𝓻𝓸𝓻* 〙══╗\n\n` +
+                    `Something went wrong: ${err.message}\n\nPlease try again.\n\n` +
+                    `╚════════════════════════╝`,
+                    {
+                        parse_mode: 'Markdown',
+                        reply_markup: {
+                            inline_keyboard: [[
+                                { text: '🔄 Try Again', callback_data: `retry_pair_${phone}` }
+                            ]]
+                        }
+                    }
+                );
+            }
+        });
+
+        // ─── /sessions ───────────────────────────────────────────────────────
+        bot.onText(/\/sessions/, async (msg) => {
+            const chatId = msg.chat.id;
+            const name = msg.from.first_name || 'User';
+
+            const isMember = await isChannelMember(chatId);
+            if (!isMember) return sendJoinRequired(chatId, name);
+
+            const saved = listSavedSessions();
+            const active = getActiveSessions();
+
+            if (saved.length === 0) {
+                return bot.sendMessage(chatId,
+                    `╔══〘 📭 *𝓝𝓸 𝓢𝓮𝓼𝓼𝓲𝓸𝓷𝓼* 〙══╗\n\n` +
+                    `No sessions yet.\nUse /pair to connect your WhatsApp.\n\n` +
+                    `╚════════════════════════╝`,
+                    {
+                        parse_mode: 'Markdown',
+                        reply_markup: {
+                            inline_keyboard: [[
+                                { text: '🔗 Pair WhatsApp', callback_data: 'start_pair' }
+                            ]]
+                        }
+                    }
+                );
+            }
+
+            const lines = saved.map(phone => {
+                const entry = active.get(phone);
+                const status = entry && !entry.reconnecting ? '🟢 Connected' : '🔴 Disconnected';
+                return `• +${phone} — ${status}`;
+            });
+
+            bot.sendMessage(chatId,
+                `╔══〘 📋 *𝓢𝓮𝓼𝓼𝓲𝓸𝓷𝓼 (${saved.length})* 〙══╗\n\n` +
+                `${lines.join('\n')}\n\n` +
+                `╚════════════════════════╝`,
+                {
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: '🔗 Add New Session', callback_data: 'start_pair' }],
+                            [{ text: '📊 Status', callback_data: 'check_status' }]
+                        ]
+                    }
+                }
+            );
+        });
+
+        // ─── /status ─────────────────────────────────────────────────────────
+        bot.onText(/\/status/, async (msg) => {
+            const chatId = msg.chat.id;
+            const name = msg.from.first_name || 'User';
+
+            const isMember = await isChannelMember(chatId);
+            if (!isMember) return sendJoinRequired(chatId, name);
+
+            const settings = require('./settings');
+            const active = getActiveSessions().size;
+            const saved = listSavedSessions().length;
+
+            bot.sendMessage(chatId,
+                `╔══〘 📊 *┆『𝗗𝗔𝗥𝗞-𝗩𝗘𝗡𝗢𝗠 𝗠𝗗』𝓢𝓽𝓪𝓽𝓾𝓼* 〙══╗\n\n` +
+                `🤖 *Bot:* ${settings.botName}\n` +
+                `🔖 *Version:* ${settings.version}\n` +
+                `💾 *Saved Sessions:* ${saved}\n` +
+                `🔌 *Active Connections:* ${active}\n` +
+                `✅ *Status:* Running\n\n` +
+                `╚════════════════════════╝`,
+                {
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: '📋 My Sessions', callback_data: 'show_sessions' }],
+                            [{ text: '🔗 Add New Session', callback_data: 'start_pair' }]
+                        ]
+                    }
+                }
+            );
+        });
+
+        // ─── /broadcast ──────────────────────────────────────────────────────
+        // Sends a message to all users who have ever interacted with the bot
+        bot.onText(/\/broadcast(?:\s+([\s\S]+))?/, async (msg, match) => {
+            const chatId = msg.chat.id;
+            const name = msg.from.first_name || 'User';
+
+            // Load owner IDs from settings or env
+            const ownerIds = (process.env.TELEGRAM_OWNER_IDS || '')
+                .split(',')
+                .map(id => parseInt(id.trim(), 10))
+                .filter(Boolean);
+
+            if (ownerIds.length > 0 && !ownerIds.includes(chatId)) {
+                return bot.sendMessage(chatId,
+                    `╔══〘 🚫 *𝓐𝓬𝓬𝓮𝓼𝓼 𝓓𝓮𝓷𝓲𝓮𝓭* 〙══╗\n\nOnly the bot owner can use /broadcast.\n\n╚════════════════════════╝`,
+                    { parse_mode: 'Markdown' }
+                );
+            }
+
+            const broadcastText = match && match[1] ? match[1].trim() : null;
+            if (!broadcastText) {
+                return bot.sendMessage(chatId,
+                    `╔══〘 📢 *𝓑𝓻𝓸𝓪𝓭𝓬𝓪𝓼𝓽* 〙══╗\n\n` +
+                    `Usage: \`/broadcast <message>\`\n\n` +
+                    `*Example:*\n\`/broadcast Hello everyone! Bot update is live.\`\n\n` +
+                    `This will send your message to all active sessions.\n\n` +
+                    `╚════════════════════════╝`,
+                    { parse_mode: 'Markdown' }
+                );
+            }
+
+            const saved = listSavedSessions();
+            const active = getActiveSessions();
+
+            if (saved.length === 0) {
+                return bot.sendMessage(chatId,
+                    `╔══〘 📭 *𝓝𝓸 𝓢𝓮𝓼𝓼𝓲𝓸𝓷𝓼* 〙══╗\n\nNo sessions to broadcast to.\n\n╚════════════════════════╝`,
+                    { parse_mode: 'Markdown' }
+                );
+            }
+
+            await bot.sendMessage(chatId,
+                `╔══〘 ⏳ *𝓑𝓻𝓸𝓪𝓭𝓬𝓪𝓼𝓽𝓲𝓷𝓰...* 〙══╗\n\n` +
+                `Sending to ${saved.length} session(s)...\n\n╚════════════════════════╝`,
+                { parse_mode: 'Markdown' }
+            );
+
+            let sent = 0;
+            let failed = 0;
+            const broadcastMsg = `╔══〘 📢 * 𝓜𝓓 𝓐𝓷𝓷𝓸𝓾𝓷𝓬𝓮𝓶𝓮𝓷𝓽* 〙══╗\n\n${broadcastText}\n\n╚════════════════════════╝`;
+
+            for (const phone of saved) {
+                const entry = active.get(phone);
+                if (!entry || !entry.sock) { failed++; continue; }
+                try {
+                    await entry.sock.sendMessage(`${phone}@s.whatsapp.net`, { text: broadcastMsg });
+                    sent++;
+                } catch (e) {
+                    failed++;
+                }
+            }
+
+            await bot.sendMessage(chatId,
+                `╔══〘 ✅ *𝓑𝓻𝓸𝓪𝓭𝓬𝓪𝓼𝓽 𝓓𝓸𝓷𝓮* 〙══╗\n\n` +
+                `✅ *Sent:* ${sent}\n` +
+                `❌ *Failed:* ${failed}\n` +
+                `📊 *Total:* ${saved.length}\n\n` +
+                `╚════════════════════════╝`,
+                { parse_mode: 'Markdown' }
+            );
+        });
+
+        // ─── /help ───────────────────────────────────────────────────────────
+        bot.onText(/\/help/, async (msg) => {
+            const chatId = msg.chat.id;
+            const name = msg.from.first_name || 'User';
+
+            const isMember = await isChannelMember(chatId);
+            if (!isMember) return sendJoinRequired(chatId, name);
+
+            bot.sendMessage(chatId,
+                `╔══〘 📖 * 『𝗗𝗔𝗥𝗞-𝗩𝗘𝗡𝗢𝗠 𝗠𝗗』 helps the weak * 〙══╗\n\n` +
+                `┏━━━〘 🤖 *𝓣𝓮𝓵𝓮𝓰𝓻𝓪𝓶 𝓒𝓸𝓶𝓶𝓪𝓷𝓭𝓼* 〙━━━\n` +
+                `┃ /start — Welcome & instructions\n` +
+                `┃ /pair <phone> — Connect WhatsApp\n` +
+                `┃ /sessions — List connected accounts\n` +
+                `┃ /status — Bot status\n` +
+                `┃ /broadcast <msg> — Send to all sessions (owner only)\n` +
+                `┃ /help — This message\n` +
+                `┗━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+                `┏━━━〘 📱 *𝓦𝓱𝓪𝓽𝓼𝓐𝓹𝓹 𝓒𝓸𝓶𝓶𝓪𝓷𝓭𝓼* 〙━━━\n` +
+                `┃ .menu — All bot commands\n` +
+                `┃ .sticker — Make sticker\n` +
+                `┃ .tagall — Tag everyone\n` +
+                `┃ .owner — Contact owner\n` +
+                `┃ .pair — Pairing info\n` +
+                `┃ .ping — Check bot speed\n` +
+                `┃ .alive — Bot status\n` +
+                `┃ ...and many more!\n` +
+                `┗━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+                `╚════════════════════════╝`,
+                {
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: '🔗 Pair My WhatsApp', callback_data: 'start_pair' }],
+                            [
+                                { text: '📊 Status', callback_data: 'check_status' },
+                                { text: '📋 Sessions', callback_data: 'show_sessions' }
+                            ],
+                            [{ text: '📢 Join Channel', url: `https://t.me/${FORCE_JOIN_CHANNEL}` }],
+                            [{ text: '📢 Join Channel', url: `https://t.me/${FORCE_JOIN_GROUP}`  }]
+                        ]
+                    }
+                }
+            );
+        });
+
+        // ─── Callback Query Handler (button presses) ─────────────────────────
+        bot.on('callback_query', async (query) => {
+            const chatId = query.message.chat.id;
+            const name = query.from.first_name || 'User';
+            const data = query.data;
+
+            await bot.answerCallbackQuery(query.id).catch(() => {});
+
+            if (data === 'check_join') {
+                const isMember = await isChannelMember(chatId);
+                if (isMember) {
+                    await bot.sendMessage(chatId,
+                        `╔══〘 ✅ *𝓥𝓮𝓻𝓲𝓯𝓲𝓮𝓭!* 〙══╗\n\nWelcome aboard, *${name}*!\nSend /start to begin.\n\n╚════════════════════════╝`,
+                        { parse_mode: 'Markdown' }
+                    );
+                } else {
+                    await sendJoinRequired(chatId, name);
+                }
+                return;
+            }
+
+            if (data === 'start_pair') {
+                await bot.sendMessage(chatId,
+                    `╔══〘 🔗 *𝓟𝓪𝓲𝓻 𝓨𝓸𝓾𝓻 𝓦𝓱𝓪𝓽𝓼𝓐𝓹𝓹* 〙══╗\n\n` +
+                    `Send your phone number:\n\n` +
+                    `\`/pair 2348012345678\`\n\n` +
+                    `📌 _Include country code, no + or spaces_\n\n` +
+                    `╚════════════════════════╝`,
+                    { parse_mode: 'Markdown' }
+                );
+                return;
+            }
+
+            if (data === 'pair_done') {
+                await bot.sendMessage(chatId,
+                    `╔══〘 ⏳ *𝓛𝓲𝓷𝓴𝓲𝓷𝓰...* 〙══╗\n\nYour WhatsApp is being linked. You'll get a confirmation shortly!\n\n╚════════════════════════╝`,
+                    { parse_mode: 'Markdown' }
+                );
+                return;
+            }
+
+            if (data === 'pair_help') {
+                await bot.sendMessage(chatId,
+                    `╔══〘 ❓ *𝓗𝓸𝔀 𝓽𝓸 𝓟𝓪𝓲𝓻* 〙══╗\n\n` +
+                    `1️⃣ Send: \`/pair <your_number>\`\n` +
+                    `2️⃣ Open *WhatsApp* → ⋮ Menu\n` +
+                    `3️⃣ Tap *Linked Devices*\n` +
+                    `4️⃣ Tap *Link a Device*\n` +
+                    `5️⃣ Tap *Link with phone number*\n` +
+                    `6️⃣ Enter the code sent here\n\n` +
+                    `╚════════════════════════╝`,
+                    { parse_mode: 'Markdown' }
+                );
+                return;
+            }
+
+            if (data === 'check_status') {
+                const settings = require('./settings');
+                const active = getActiveSessions().size;
+                const saved = listSavedSessions().length;
+                await bot.sendMessage(chatId,
+                    `╔══〘 📊 *𝓕𝓨𝓣 𝓜𝓓 𝓢𝓽𝓪𝓽𝓾𝓼* 〙══╗\n\n` +
+                    `🤖 *Bot:* ${settings.botName}\n` +
+                    `🔖 *Version:* ${settings.version}\n` +
+                    `💾 *Saved Sessions:* ${saved}\n` +
+                    `🔌 *Active Connections:* ${active}\n` +
+                    `✅ *Status:* Running\n\n` +
+                    `╚════════════════════════╝`,
+                    { parse_mode: 'Markdown' }
+                );
+                return;
+            }
+
+            if (data === 'show_sessions') {
+                const saved = listSavedSessions();
+                const active = getActiveSessions();
+                if (saved.length === 0) {
+                    await bot.sendMessage(chatId, `No sessions yet. Use /pair to connect.`);
+                    return;
+                }
+                const lines = saved.map(phone => {
+                    const entry = active.get(phone);
+                    const status = entry && !entry.reconnecting ? '🟢 Connected' : '🔴 Disconnected';
+                    return `• +${phone} — ${status}`;
+                });
+                await bot.sendMessage(chatId,
+                    `╔══〘 📋 *𝓢𝓮𝓼𝓼𝓲𝓸𝓷𝓼* 〙══╗\n\n${lines.join('\n')}\n\n╚════════════════════════╝`,
+                    { parse_mode: 'Markdown' }
+                );
+                return;
+            }
+
+            if (data === 'show_wa_cmds') {
+                await bot.sendMessage(chatId,
+                    `╔══〘 📱 *𝓦𝓱𝓪𝓽𝓼𝓐𝓹𝓹 𝓒𝓸𝓶𝓶𝓪𝓷𝓭𝓼* 〙══╗\n\n` +
+                    `Send these on WhatsApp:\n\n` +
+                    `• .menu — Full command list\n` +
+                    `• .help — Help menu\n` +
+                    `• .alive — Bot status\n` +
+                    `• .owner — Contact owner\n` +
+                    `• .sticker — Make sticker\n` +
+                    `• .tagall — Tag everyone\n` +
+                    `• .ping — Check speed\n` +
+                    `• .pair — Pairing info\n\n` +
+                    `╚════════════════════════╝`,
+                    { parse_mode: 'Markdown' }
+                );
+                return;
+            }
+
+            if (data && data.startsWith('retry_pair_')) {
+                const phone = data.replace('retry_pair_', '');
+                await bot.sendMessage(chatId,
+                    `╔══〘 🔄 *𝓡𝓮𝓽𝓻𝔂𝓲𝓷𝓰* 〙══╗\n\nSend this command to re-pair:\n\n\`/pair ${phone}\`\n\n╚════════════════════════╝`,
+                    { parse_mode: 'Markdown' }
+                );
+                return;
+            }
+        });
+
+        bot.on('polling_error', (err) => {
+            console.error('[Telegram] Polling error:', err.message);
+        });
+
+        return bot;
+    } catch (err) {
+        console.error('[Telegram] Failed to start bot:', err.message);
+        return null;
+    }
+}
+
+function getBot() {
+    return bot;
+}
+
+module.exports = { initTelegramBot, getBot };

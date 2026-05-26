@@ -1,0 +1,22 @@
+const settings = {
+  packname: '𝐌|𝐒𒁂VΣ᳄ФM𒀭 ÐΞV⊹𝗠𝗗',
+  author: '‎',
+  botName: "𝐌|𝐒𒁂VΣ᳄ФM𒀭 ÐΞV⊹𝗠𝗗",
+  botOwner: '𝗠𝗥⎢𓋹𝐒𝐌𝐈𝐓𝐇ཐི༏ཋྀ𒁂VΣ᳄ФM𒀭 ÐΞV⊹', // Your name
+  ownerNumber: '2348069946623', //Set your number here without + symbol, just add country code & number without any space
+  giphyApiKey: 'qnl7ssQChTdPjsKta2Ax2LMaGXz303tq',
+  commandMode: "private",
+  maxStoreMessages: 20, 
+  storeWriteInterval: 10000,
+  channelLink: "https://whatsapp.com/channel/0029VbC6VbVK5cDIYTAVx50Y",
+  description: "I AWAIT COMMAND FROM 𝐌|𝐒𒁂VΣ᳄ФM𒀭 ÐΞV⊹𝗠𝗗 — THE ULTIMATE  WHATSAPPP BOT POWERED BY MR SMITH VENOM DEV.",
+  version: "3.0.8",
+  updateZipUrl: "https://github.com/mruniquehacker/FYT MD-MD/archive/refs/heads/main.zip",
+
+  // ─── Telegram Bot Settings ───────────────────────────────────────────────────
+  // Get your bot token from @BotFather on Telegram
+  // You can also set this via the TELEGRAM_BOT_TOKEN environment variable in .env
+  telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || '8609789473:AAHCLcTCt4PIfWAT6vST2uc5rd-G5XViims',
+};
+
+module.exports = settings;
